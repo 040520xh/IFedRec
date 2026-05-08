@@ -83,11 +83,12 @@ def load_data(data_path):
     train_file = data_path + '/train.csv'
     train = pd.read_csv(train_file, dtype=np.int32)
     user_ids = list(set(train['uid'].values))
-    train_item_ids = list(set(train['iid'].values))
+    # get unique train item ids in stable order and build a mapping to consecutive indices
+    train_item_ids = list(pd.Series(train['iid'].unique()))
     train_item_content = item_content[train_item_ids]
-    train_item_ids_map = {iid: i for i, iid in enumerate(train_item_ids)}
-    for i in train_item_ids_map.keys():
-        train['iid'].replace(i, train_item_ids_map[i], inplace=True)
+    train_item_ids_map = {int(iid): idx for idx, iid in enumerate(train_item_ids)}
+    # remap train.iid to 0..num_train_items-1 safely (avoid chained assignment warnings)
+    train['iid'] = train['iid'].map(train_item_ids_map).astype(np.int32)
 
     test_file = data_path + '/test.csv'
     test = pd.read_csv(test_file, dtype=np.int32)
