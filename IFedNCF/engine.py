@@ -76,8 +76,11 @@ class Engine(object):
         for key in self.server_model_param.keys():
             self.server_model_param[key].data = self.server_model_param[key].data / len(round_user_params)
 
-        # train the item representation learning module.
-        item_content = torch.tensor(item_content)
+      # train the item representation learning module.
+        if isinstance(item_content, torch.Tensor):
+            item_content = item_content.clone().detach()
+        else:
+            item_content = torch.tensor(item_content)
         target = self.server_model_param['embedding_item.weight'].data
         item_content = item_content.to(self.device)
         target = target.to(self.device)

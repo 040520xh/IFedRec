@@ -33,8 +33,8 @@ parser.add_argument('--server_model_layers', type=str, default='300')
 parser.add_argument('--client_model_layers', type=str, default='400, 200')
 parser.add_argument('--recall_k', type=str, default='20, 50, 100')
 parser.add_argument('--l2_regularization', type=float, default=0.)
-parser.add_argument('--use_cuda', type=bool, default=True)
-parser.add_argument('--device_id', type=int, default=1)
+parser.add_argument('--use_cuda', type=str, default='True')
+parser.add_argument('--device_id', type=int, default=0)
 args = parser.parse_args()
 
 # Model.
@@ -91,13 +91,21 @@ logname = os.path.join(path, current_time+'.txt')
 initLogging(logname)
 
 # Load Data
-dataset_dir = "../data/" + config['dataset']
+# 1. 获取路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+dataset_dir = os.path.join(current_dir, "..", "data", config['dataset'])
+dataset_dir = os.path.abspath(dataset_dir)
+print(f"Dataset path automatically resolved to: {dataset_dir}")
+
+# 2. 读取数据 (这一行非常关键，千万别漏掉！)
 data_dict = load_data(dataset_dir)
-# train, validation and test data with (uid, iid) dataframe format.
+
+# 3. train, validation and test data with (uid, iid) dataframe format.
 train_data = data_dict['train']
 vali_data = data_dict['vali']
 test_data = data_dict['test']
-# train, validation, test cold-start item information, including item raw feature and reindex item id dict {ori_id: reindex_id}
+
+# train, validation, test cold-start item information...
 train_item_content = data_dict['train_item_content']
 user_ids = data_dict['user_ids']
 vali_item_content = data_dict['vali_item_content']
