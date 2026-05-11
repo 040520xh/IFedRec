@@ -14,6 +14,12 @@ class Engine(object):
 
     def __init__(self, config):
         self.config = config  # model configuration
+        # determine device: prefer CUDA only if requested and available
+        if config.get('use_cuda', False) is True and torch.cuda.is_available():
+            device_idx = config.get('device_id', 0)
+            self.device = torch.device('cuda:%d' % device_idx)
+        else:
+            self.device = torch.device('cpu')
         self.server_opt = torch.optim.Adam(self.server_model.parameters(), lr=config['lr_server'],
                                            weight_decay=config['l2_regularization'])
         self.server_model_param = {}
@@ -35,9 +41,8 @@ class Engine(object):
         ratings = ratings.float()
         reg_item_embedding = copy.deepcopy(self.server_model_param['global_item_rep'])
 
-        if self.config['use_cuda'] is True:
-            items, ratings = items.cuda(), ratings.cuda()
-            reg_item_embedding = reg_item_embedding.cuda()
+        items, ratings = items.to(self.device), ratings.to(self.device)
+        reg_item_embedding = reg_item_embedding.to(self.device)
 
         optimizer, optimizer_u, optimizer_i = optimizers
         # update score function.
@@ -74,9 +79,8 @@ class Engine(object):
         # train the item representation learning module.
         item_content = torch.tensor(item_content)
         target = self.server_model_param['embedding_item.weight'].data
-        if self.config['use_cuda'] is True:
-            item_content = item_content.cuda()
-            target = target.cuda()
+        item_content = item_content.to(self.device)
+        target = target.to(self.device)
         self.server_model.train()
         for epoch in range(self.config['server_epoch']):
             self.server_opt.zero_grad()
@@ -103,9 +107,7 @@ class Engine(object):
 
         # initialize server parameters for the first round.
         if round_id == 0:
-            item_content = torch.tensor(item_content)
-            if self.config['use_cuda'] is True:
-                item_content = item_content.cuda()
+            item_content = torch.tensor(item_content).to(self.device)
             self.server_model.eval()
             with torch.no_grad():
                 global_item_rep = self.server_model(item_content)
@@ -123,8 +125,8 @@ class Engine(object):
                 user_param_dict = copy.deepcopy(self.client_model.state_dict())
                 if user in self.client_model_params.keys():
                     for key in self.client_model_params[user].keys():
-                        user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).cuda()
-                user_param_dict['embedding_item.weight'] = copy.deepcopy(self.server_model_param['embedding_item.weight'].data).cuda()
+                        user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).to(self.device)
+                user_param_dict['embedding_item.weight'] = copy.deepcopy(self.server_model_param['embedding_item.weight'].data).to(self.device)
                 model_client.load_state_dict(user_param_dict)
             # Defining optimizers
             # optimizer is responsible for updating score function.
@@ -176,9 +178,7 @@ class Engine(object):
            output:
         recall, precision, ndcg
         """
-        item_content = torch.tensor(item_content)
-        if self.config['use_cuda'] is True:
-            item_content = item_content.cuda()
+        item_content = torch.tensor(item_content).to(self.device)
 
         # obtain cold-start items' latent representation via server model.
         current_model = copy.deepcopy(self.server_model)
@@ -194,7 +194,7 @@ class Engine(object):
             user_param_dict = copy.deepcopy(self.client_model.state_dict())
             if user in self.client_model_params.keys():
                 for key in self.client_model_params[user].keys():
-                    user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).cuda()
+                    user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).to(self.device)
             user_model.load_state_dict(user_param_dict)
             user_model.eval()
             with torch.no_grad():

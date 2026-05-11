@@ -3,6 +3,8 @@
 """
 import torch
 import logging
+import os
+import re
 import numpy as np
 import scipy.sparse as sp
 import pandas as pd
@@ -15,8 +17,12 @@ def save_checkpoint(model, model_dir):
 
 
 def resume_checkpoint(model, model_dir, device_id):
-    state_dict = torch.load(model_dir,
-                            map_location=lambda storage, loc: storage.cuda(device=device_id))  # ensure all storage are on gpu
+    # Load checkpoint safely: if CUDA is available, move to GPU device, otherwise load to CPU
+    if torch.cuda.is_available():
+        map_loc = lambda storage, loc: storage.cuda(device=device_id)
+    else:
+        map_loc = 'cpu'
+    state_dict = torch.load(model_dir, map_location=map_loc)
     model.load_state_dict(state_dict)
 
 
@@ -48,11 +54,16 @@ def use_optimizer(network, params):
 def initLogging(logFilename):
     """Init for logging
     """
+    # sanitize filename for Windows (remove characters like ':' that are invalid in filenames)
+    safe_logFilename = re.sub(r'[<>:"/\\|?*]', '-', logFilename)
+    log_dir = os.path.dirname(safe_logFilename)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
     logging.basicConfig(
                     level    = logging.DEBUG,
                     format='%(asctime)s-%(levelname)s-%(message)s',
                     datefmt  = '%y-%m-%d %H:%M',
-                    filename = logFilename,
+                    filename = safe_logFilename,
                     filemode = 'w');
     console = logging.StreamHandler()
     console.setLevel(logging.INFO)

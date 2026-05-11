@@ -20,7 +20,13 @@ class Client(torch.nn.Module):
         self.logistic = torch.nn.Sigmoid()
 
     def forward(self, item_indices):
-        user_embedding = self.embedding_user(torch.tensor([0] * len(item_indices)).cuda())
+        device = self.embedding_user.weight.device
+        if not isinstance(item_indices, torch.Tensor):
+            item_indices = torch.tensor(item_indices, device=device, dtype=torch.long)
+        else:
+            item_indices = item_indices.to(device)
+        user_idxs = torch.tensor([0] * len(item_indices), device=device, dtype=torch.long)
+        user_embedding = self.embedding_user(user_idxs)
         item_embedding = self.embedding_item(item_indices)
         vector = torch.cat([user_embedding, item_embedding], dim=-1)
         for idx, _ in enumerate(range(len(self.fc_layers))):
@@ -31,7 +37,9 @@ class Client(torch.nn.Module):
         return rating
 
     def cold_predict(self, item_embedding):
-        user_embedding = self.embedding_user(torch.tensor([0] * item_embedding.shape[0]).cuda())
+        device = item_embedding.device
+        user_idxs = torch.tensor([0] * item_embedding.shape[0], device=device, dtype=torch.long)
+        user_embedding = self.embedding_user(user_idxs)
         vector = torch.cat([user_embedding, item_embedding], dim=-1)
         for idx, _ in enumerate(range(len(self.fc_layers))):
             vector = self.fc_layers[idx](vector)
@@ -81,8 +89,9 @@ class MLPEngine(Engine):
     def __init__(self, config):
         self.client_model = Client(config)
         self.server_model = Server(config)
-        if config['use_cuda'] is True:
-            # use_cuda(True, config['device_id'])
-            self.client_model.cuda()
-            self.server_model.cuda()
+        if config.get('use_cuda', False) is True and torch.cuda.is_available():
+            device_idx = config.get('device_id', 0)
+            device = torch.device('cuda:%d' % device_idx)
+            self.client_model.to(device)
+            self.server_model.to(device)
         super(MLPEngine, self).__init__(config)

@@ -39,6 +39,11 @@ args = parser.parse_args()
 
 # Model.
 config = vars(args)
+# Coerce use_cuda to a proper bool (argparse with type=bool can misinterpret string values)
+if isinstance(config.get('use_cuda'), str):
+    config['use_cuda'] = config['use_cuda'].lower() in ('true', '1', 'yes')
+else:
+    config['use_cuda'] = bool(config.get('use_cuda'))
 if len(config['recall_k']) > 1:
     config['recall_k'] = [int(item) for item in config['recall_k'].split(',')]
 else:
