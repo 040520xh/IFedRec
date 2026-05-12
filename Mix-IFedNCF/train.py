@@ -2,6 +2,7 @@ import numpy as np
 import datetime
 import os
 import pandas as pd
+from tqdm import tqdm
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import argparse
 from mlp import MLPEngine
@@ -84,7 +85,10 @@ COLD_START_ROUND = 1 #cpu临时版测试
 
 cold_recalls_monitor = [] 
 
-for round in range(config['num_round']):
+# 【修改这里】：用 tqdm 包裹循环动态进度条
+pbar = tqdm(range(config['num_round']), desc="🚀 联邦训练", unit="轮", colour="green", dynamic_ncols=True)
+
+for round in pbar:
     logging.info('-' * 60)
     logging.info(f'🔄 第 {round} 轮联邦通信开始...')
 
@@ -117,6 +121,14 @@ for round in range(config['num_round']):
         logging.info('📊 监控：老用户系统指标')
         warm_recall, _, warm_ndcg = engine.fed_evaluate(warm_test_data, dummy_item_content, dummy_item_ids_map)
         logging.info(f"🔥 老兵 Recall@20 = {warm_recall[1]:.4f} | NDCG@20 = {warm_ndcg[1]:.4f}")
+   
+   
+    # 【在循环的最末尾加上这一段】：让进度条尾部动态显示最新战况！
+    if round >= COLD_START_ROUND:
+        pbar.set_postfix({"阶段": "新老融合", "新兵 Recall@20": f"{cold_recall[1]:.4f}"})
+    else:
+        pbar.set_postfix({"阶段": "基座构建", "老兵 Recall@20": f"{warm_recall[1]:.4f}"})
+
 
 logging.info('=' * 60)
 logging.info('🎉 实验完成！冷启动用户 Recall@20 爬坡轨迹：')
