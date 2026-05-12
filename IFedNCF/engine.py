@@ -103,7 +103,9 @@ class Engine(object):
         """train a round."""
         # sample users participating in single round.
         if self.config['clients_sample_ratio'] <= 1:
-            num_participants = int(self.config['num_users'] * self.config['clients_sample_ratio'])
+            # 改为按当前池子实际人数采样 len(user_ids)
+            num_participants = int(len(user_ids) * self.config['clients_sample_ratio'])
+            num_participants = min(num_participants, len(user_ids))
             participants = np.random.choice(user_ids, num_participants, replace=False)
         else:
             participants = np.random.choice(user_ids, self.config['clients_sample_num'], replace=False)

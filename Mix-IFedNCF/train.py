@@ -46,11 +46,17 @@ config['client_model_layers'] = [int(item) for item in config['client_model_laye
 # ==========================================
 # 2. 初始化环境与加载数据集
 # ==========================================
-path = 'log/'
-if not os.path.exists(path): os.makedirs(path)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 强制日志保存在 Mix-IFedNCF/log 目录下
+log_path = os.path.join(current_dir, 'log')
+if not os.path.exists(log_path): 
+    os.makedirs(log_path)
+    
 current_time = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-initLogging(os.path.join(path, current_time+'.txt'))
+log_file_name = os.path.join(log_path, current_time + '.txt')
+initLogging(log_file_name)
 logging.info("🚀 启动基于 [全局热榜+停留时长] 的解耦版联邦推荐引擎...")
+
 
 # 自动解析相对路径 (无论你在哪执行，都能准确找到父目录下的 data/KuaiRec)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -82,8 +88,8 @@ engine = MLPEngine(config)
 # COLD_START_ROUND = 50 #gpu版测试
 COLD_START_ROUND = 1 #cpu临时版测试
 
-
-cold_recalls_monitor = [] 
+cold_recalls_monitor = [] # 用于图A：冷启动收敛（滴灌步数）
+warm_recalls_monitor = [] # 用于图B：全局稳定性（通信轮次） 
 
 # 【修改这里】：用 tqdm 包裹循环动态进度条
 pbar = tqdm(range(config['num_round']), desc="🚀 联邦训练", unit="轮", colour="green", dynamic_ncols=True)
@@ -92,44 +98,47 @@ for round in pbar:
     logging.info('-' * 60)
     logging.info(f'🔄 第 {round} 轮联邦通信开始...')
 
-    # 阶段路由控制 (路由只负责分配数据源，具体逻辑委托给 engine)
+    # 【核心魔改：数据滴灌策略】
     if round < COLD_START_ROUND:
         current_user_ids, current_df = warm_user_ids, warm_df_train
-        logging.info(f'🌱 阶段：基座构建期 (仅 {len(current_user_ids)} 名老用户)')
-    elif round == COLD_START_ROUND:
-        current_user_ids = warm_user_ids + cold_user_ids
-        current_df = pd.concat([warm_df_train, cold_df_train])
-        logging.info('💥 阶段：[冷启动触发] 注入新用户！时长梯度开始催熟...')
+        logging.info(f'🌱 阶段：基座构建期')
     else:
+        # 计算当前是冷启动的第几步 (1, 2, 3...)
+        interaction_step = round - COLD_START_ROUND + 1
+        
+        # 滴灌魔法：动态截取每个冷用户的前 interaction_step 个交互视频！
+        sliced_cold_df = cold_df_train.groupby('user_id').head(interaction_step)
+        
         current_user_ids = warm_user_ids + cold_user_ids
-        current_df = pd.concat([warm_df_train, cold_df_train])
-        logging.info(f'🌿 阶段：融合训练期 (共 {len(current_user_ids)} 名用户)')
+        current_df = pd.concat([warm_df_train, sliced_cold_df])
+        logging.info(f'💧 阶段：滴灌融合期 (新用户已暴露前 {interaction_step} 个视频)')
 
-    # 调用封装好的 utils 采样方法
+    # Mix-IFedNCF 使用带权采样 (IFedNCF 请换成无权采样 kuairec_baseline_sampling)
     all_train_data = kuairec_weighted_sampling(current_df, config['num_negative'], config['num_items_train'])
     
-    # 联邦训练核心
     engine.fed_train_a_round(current_user_ids, all_train_data, round, dummy_item_content)
 
-    # 结果评估分离化
-    if round >= COLD_START_ROUND:
-        logging.info('🎯 监控：冷启动新用户收敛度')
-        cold_recall, _, cold_ndcg = engine.fed_evaluate(cold_test_data, dummy_item_content, dummy_item_ids_map)
-        logging.info(f"❄️ 新兵 Recall@20 = {cold_recall[1]:.4f} | NDCG@20 = {cold_ndcg[1]:.4f}")
-        cold_recalls_monitor.append(cold_recall[1])
-    else:
-        logging.info('📊 监控：老用户系统指标')
-        warm_recall, _, warm_ndcg = engine.fed_evaluate(warm_test_data, dummy_item_content, dummy_item_ids_map)
-        logging.info(f"🔥 老兵 Recall@20 = {warm_recall[1]:.4f} | NDCG@20 = {warm_ndcg[1]:.4f}")
-   
-   
-    # 【在循环的最末尾加上这一段】：让进度条尾部动态显示最新战况！
-    if round >= COLD_START_ROUND:
-        pbar.set_postfix({"阶段": "新老融合", "新兵 Recall@20": f"{cold_recall[1]:.4f}"})
-    else:
-        pbar.set_postfix({"阶段": "基座构建", "老兵 Recall@20": f"{warm_recall[1]:.4f}"})
+    # 评估与记录
+    warm_recall, _, warm_ndcg = engine.fed_evaluate(warm_test_data, dummy_item_content, dummy_item_ids_map)
+    warm_recalls_monitor.append(warm_recall[1]) # 永远记录老用户的 Recall@20
 
+    if round >= COLD_START_ROUND:
+        cold_recall, _, cold_ndcg = engine.fed_evaluate(cold_test_data, dummy_item_content, dummy_item_ids_map)
+        cold_recalls_monitor.append(cold_recall[1]) # 记录新用户的 Recall@20
+        pbar.set_postfix({"阶段": "新老融合", "新兵": f"{cold_recall[1]:.4f}", "老兵": f"{warm_recall[1]:.4f}"})
+    else:
+        pbar.set_postfix({"阶段": "基座构建", "老兵": f"{warm_recall[1]:.4f}"})
 
 logging.info('=' * 60)
 logging.info('🎉 实验完成！冷启动用户 Recall@20 爬坡轨迹：')
 logging.info(str(cold_recalls_monitor))
+
+
+# ==========================================
+# 4. 纯净保存实验数据 (供画图脚本提取)
+# ==========================================
+np.save(os.path.join(log_path, 'warm_recalls.npy'), warm_recalls_monitor)
+if len(cold_recalls_monitor) > 0:
+    np.save(os.path.join(log_path, 'cold_recalls.npy'), cold_recalls_monitor)
+
+logging.info('🎉 实验完成！核心评估数组已保存至 log 文件夹，请使用外部画图脚本生成论文插图。')
