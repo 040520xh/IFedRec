@@ -20,7 +20,7 @@ parser.add_argument('--num_round', type=int, default=100)
 parser.add_argument('--local_epoch', type=int, default=1)
 parser.add_argument('--server_epoch', type=int, default=1)
 parser.add_argument('--lr_eta', type=int, default=80)
-parser.add_argument('--reg', type=float, default=1.0)
+parser.add_argument('--reg', type=float, default=0.0)#之前是1.0，改成0.0以便更好地观察模型性能
 parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--optimizer', type=str, default='sgd')
 parser.add_argument('--lr_client', type=float, default=0.5)

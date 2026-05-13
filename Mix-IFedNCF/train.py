@@ -19,7 +19,7 @@ parser.add_argument('--num_round', type=int, default=100)
 parser.add_argument('--local_epoch', type=int, default=1)
 parser.add_argument('--server_epoch', type=int, default=1)
 parser.add_argument('--lr_eta', type=int, default=80)
-parser.add_argument('--reg', type=float, default=1.0)
+parser.add_argument('--reg', type=float, default=0.0)# 之前是1.0，改成0.0以便更好地观察模型性能
 parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--optimizer', type=str, default='sgd')
 parser.add_argument('--lr_client', type=float, default=0.5)
@@ -97,8 +97,11 @@ engine = MLPEngine(config)
 # ==========================================
 # 3. 时间切片控制与训练循环
 # ==========================================
-COLD_START_ROUND = 50 #gpu版测试
-# COLD_START_ROUND = 1 #cpu/快速临时版测试
+# COLD_START_ROUND = 50 #gpu版测试
+# nohup python Mix-IFedNCF/train.py --use_cuda True --num_round 100 --clients_sample_ratio 0.1 --num_negative 5 --batch_size 256 --reg 0.0 --lr_client 0.1 > ours.log 2>&1 &
+
+COLD_START_ROUND = 1 #cpu/快速临时版测试
+#python Mix-IFedNCF/train.py --use_cuda True --num_round 4 --clients_sample_num 10 --num_negative 1 --batch_size 128 --reg 0.0 --lr_client 0.1
 
 cold_recalls_monitor = [] # 用于图A：冷启动收敛（滴灌步数）
 warm_recalls_monitor = [] # 用于图B：全局稳定性（通信轮次） 
