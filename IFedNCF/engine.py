@@ -94,105 +94,71 @@ class Engine(object):
         self.server_model_param['global_item_rep'] = global_item_rep
 
 
-    def fed_train_a_round(self, user_ids, all_train_data, round_id, item_content):
-        """train a round."""
-        # sample users participating in single round.
-        if self.config['clients_sample_ratio'] <= 1:
-            # 改为按当前池子实际人数采样 len(user_ids)
-            num_participants = int(len(user_ids) * self.config['clients_sample_ratio'])
-            num_participants = min(num_participants, len(user_ids))
-            participants = np.random.choice(user_ids, num_participants, replace=False)
-        else:
-            participants = np.random.choice(user_ids, self.config['clients_sample_num'], replace=False)
+    def fed_train_single_batch(self, model_client, batch_data, optimizers):
+        """train a batch and return an updated model."""
+        # 解包 Dataset 传来的 4 个返回值，包含 weights
+        _, items, ratings, weights = batch_data[0], batch_data[1], batch_data[2], batch_data[3]
+        
+        ratings = ratings.float()
+        weights = weights.float()
+        
+        items, ratings, weights = items.to(self.device), ratings.to(self.device), weights.to(self.device)
 
-        # initialize server parameters for the first round.
-        if round_id == 0:
-            item_content = torch.tensor(item_content).to(self.device)
-            self.server_model.eval()
-            with torch.no_grad():
-                global_item_rep = self.server_model(item_content)
-            self.server_model_param['global_item_rep'] = global_item_rep
+        optimizer = optimizers[0]
+        optimizer.zero_grad()
 
-        # store users' model parameters of current round.
-        round_participant_params = {}
-        # perform model update for each participated user.
-        for user in participants:
-            # copy the client model architecture from self.client_model
-            model_client = copy.deepcopy(self.client_model)
-            # for the first round, client models copy initialized parameters directly.
-            # for other rounds, client models receive updated item embedding from server.
-            if round_id != 0:
-                user_param_dict = copy.deepcopy(self.client_model.state_dict())
-                if user in self.client_model_params.keys():
-                    for key in self.client_model_params[user].keys():
-                        user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).to(self.device)
-                user_param_dict['embedding_item.weight'] = copy.deepcopy(self.server_model_param['embedding_item.weight'].data).to(self.device)
-                model_client.load_state_dict(user_param_dict)
-            # Defining optimizers
-            # optimizer is responsible for updating score function.
-            # 【终极修复】：使用业界最稳健的 Adam 优化器统一接管，彻底解决原版公式引发的八万倍梯度爆炸！
-            optimizer = torch.optim.Adam(model_client.parameters(), lr=0.001)
-            optimizers = [optimizer]
-
-            # load current user's training data and instance a train loader.
-            user_train_data = all_train_data[user]
-            user_dataloader = self.instance_user_train_loader(user_train_data)
-            model_client.train()
-            # update client model.
-            for epoch in range(self.config['local_epoch']):
-                for batch_id, batch in enumerate(user_dataloader):
-                    assert isinstance(batch[0], torch.LongTensor)
-                    model_client = self.fed_train_single_batch(model_client, batch, optimizers)
-            # obtain client model parameters.
-            client_param = model_client.state_dict()
-            # store client models' local parameters for personalization.
-            self.client_model_params[user] = {}
-            for key in client_param.keys():
-                if key != 'embedding_item.weight':
-                    self.client_model_params[user][key] = copy.deepcopy(client_param[key].data).cpu()
-            # store client models' local parameters for global update.
-            round_participant_params[user] = {}
-            round_participant_params[user]['embedding_item.weight'] = copy.deepcopy(
-                client_param['embedding_item.weight']).data.cpu()
-        # aggregate client models in server side.
-        self.aggregate_clients_params(round_participant_params, item_content)
+        ratings_pred = model_client(items)
+        
+        # 加权 Loss 计算 (时长赋权核心)
+        base_loss = self.client_crit(ratings_pred.view(-1), ratings)
+        weighted_loss = base_loss * weights
+        loss = weighted_loss.mean()
+        
+        # 【完美避坑】：只有 reg > 0 时（即真实文本拉力存在时），才去索要并计算 global_item_rep
+        if self.config.get('reg', 0.0) > 0.0:
+            reg_item_embedding = copy.deepcopy(self.server_model_param['global_item_rep'])
+            reg_item_embedding = reg_item_embedding.to(self.device)
+            regularization_term = compute_regularization(model_client, reg_item_embedding)
+            loss += self.config['reg'] * regularization_term
+        
+        loss.backward()
+        optimizer.step()
+        return model_client
 
 
     def fed_evaluate(self, evaluate_data, item_content, item_ids_map):
-        """
-        终极版 5.0：完美匹配原作者 utils.py 的参数签名与数据流
-        """
+        """捍卫版：匹配解耦逻辑的测试函数（不再强加 Server 的 MLP）"""
         import torch
         import copy
 
         user_ids = evaluate_data['uid'].unique()
         user_item_preds = {} 
-
-        # 构造所有物品的索引张量
         all_item_indices = torch.arange(self.config['num_items_train']).to(self.device)
 
-        # 逐个用户进行预测
         for user in user_ids:
             user_model = copy.deepcopy(self.client_model)
             user_param_dict = copy.deepcopy(self.client_model.state_dict())
             
+            # 1. 完全加载该用户本地强大的个性化网络
             if user in self.client_model_params.keys():
                 for key in self.client_model_params[user].keys():
                     user_param_dict[key] = copy.deepcopy(self.client_model_params[user][key].data).to(self.device)
+            
+            # 2. 拼接最新的全局 Item Embedding
+            if 'embedding_item.weight' in self.server_model_param:
+                user_param_dict['embedding_item.weight'] = copy.deepcopy(self.server_model_param['embedding_item.weight'].data).to(self.device)
             
             user_model.load_state_dict(user_param_dict)
             user_model.eval()
             
             with torch.no_grad():
                 preds = user_model(all_item_indices)
-                # 保持 PyTorch Tensor 格式，供 utils.py 调用 .topk()
                 user_item_preds[user] = preds.view(-1).cpu()
 
-        # 【核心修复】：严格按照 utils.py 要求的 4 个参数顺序进行调用！
         recall, precision, ndcg = compute_metrics(
-            evaluate_data,            # 1. 原始测试集 DataFrame
-            user_item_preds,          # 2. 预测结果 Tensor 字典
-            item_ids_map,             # 3. 物品 ID 映射表
-            self.config['recall_k']   # 4. [10, 20, 50] 列表
+            evaluate_data,            
+            user_item_preds,          
+            item_ids_map,             
+            self.config['recall_k']   
         )
         return recall, precision, ndcg
