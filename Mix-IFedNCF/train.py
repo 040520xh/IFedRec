@@ -97,10 +97,10 @@ engine = MLPEngine(config)
 # ==========================================
 # 3. 时间切片控制与训练循环
 # ==========================================
-# COLD_START_ROUND = 50 #gpu版测试
+COLD_START_ROUND = 50 #gpu版测试
 # nohup python Mix-IFedNCF/train.py --use_cuda True --num_round 100 --clients_sample_ratio 0.1 --num_negative 5 --batch_size 256 --reg 0.0 --lr_client 0.1 > ours.log 2>&1 &
 
-COLD_START_ROUND = 1 #cpu/快速临时版测试
+# COLD_START_ROUND = 1 #cpu/快速临时版测试
 #python Mix-IFedNCF/train.py --use_cuda True --num_round 4 --clients_sample_num 10 --num_negative 1 --batch_size 128 --reg 0.0 --lr_client 0.1
 
 cold_recalls_monitor = [] # 用于图A：冷启动收敛（滴灌步数）
