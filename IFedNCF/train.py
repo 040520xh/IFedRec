@@ -54,7 +54,19 @@ if not os.path.exists(log_path):
     
 current_time = datetime.datetime.now().strftime('%Y-%m-%d %H-%M-%S')
 log_file_name = os.path.join(log_path, current_time + '_Baseline.txt')
-initLogging(log_file_name)
+# 彻底绕开 utils.py 里原作者的 replace('/', '-') 坑，使用原生日志配置
+import logging
+# 清理之前可能绑定的日志句柄
+for handler in logging.root.handlers[:]:
+    logging.root.removeHandler(handler)
+    
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s-%(levelname)s-%(message)s',
+                    filename=log_file_name,
+                    filemode='w')
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter('%(asctime)s-%(levelname)s-%(message)s'))
+logging.getLogger('').addHandler(console)
 logging.info("🚀 启动 [基线 Baseline] 原版 IFedNCF 联邦推荐引擎...")
 
 def kuairec_baseline_sampling(df, num_negative, total_items):
@@ -111,7 +123,7 @@ engine = MLPEngine(config)
 # ==========================================
 # 3. 时间切片控制与训练循环
 # ==========================================
-COLD_START_ROUND = 50  
+COLD_START_ROUND = 50
 cold_recalls_monitor = [] # 用于图A：冷启动收敛（滴灌步数）
 warm_recalls_monitor = [] # 用于图B：全局稳定性（通信轮次）
 
@@ -149,10 +161,18 @@ for round in pbar:
     if round >= COLD_START_ROUND:
         cold_recall, _, cold_ndcg = engine.fed_evaluate(cold_test_data, dummy_item_content, dummy_item_ids_map)
         cold_recalls_monitor.append(cold_recall[1]) # 记录新用户的 Recall@20
+        
+        # 【新增】：显式写入 txt 日志文件，作为永久学术记录
+        logging.info(f"📊 评估结果 -> 老兵 Recall@20: {warm_recall[1]:.4f} | 新兵 Recall@20: {cold_recall[1]:.4f}")
+        
+        # 屏幕进度条动态显示
         pbar.set_postfix({"阶段": "新老融合", "新兵": f"{cold_recall[1]:.4f}", "老兵": f"{warm_recall[1]:.4f}"})
     else:
+        # 【新增】：显式写入 txt 日志文件
+        logging.info(f"📊 评估结果 -> 老兵 Recall@20: {warm_recall[1]:.4f}")
+        
+        # 屏幕进度条动态显示
         pbar.set_postfix({"阶段": "基座构建", "老兵": f"{warm_recall[1]:.4f}"})
-
 
 # ==========================================
 # 4. 纯净保存实验数据 (供画图脚本提取)
